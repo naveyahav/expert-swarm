@@ -91,6 +91,8 @@ def save_manifest(manifest: dict) -> None:
 def find_expert_by_path(manifest: dict, adapter_path: Path) -> tuple[str, dict] | None:
     """Return (expert_name, entry) whose adapter_path resolves to *adapter_path*."""
     for name, entry in manifest.get("experts", {}).items():
+        if not entry.get("adapter_path"):  # skip base/null entries
+            continue
         resolved = (PROJECT_ROOT / entry["adapter_path"]).resolve()
         if resolved == adapter_path.resolve():
             return name, entry
