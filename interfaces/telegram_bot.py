@@ -20,6 +20,8 @@ Run:
     TELEGRAM_BOT_TOKEN=<your_token> python interfaces/telegram_bot.py
 """
 
+import asyncio
+import functools
 import hashlib
 import hmac
 import logging
@@ -116,7 +118,12 @@ async def cmd_experts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Route a prompt: /ask <expert> <message>"""
+    """Route a prompt: /ask <expert> <message>
+
+    Inference runs in a ThreadPoolExecutor via run_in_executor so the async
+    event loop is never blocked — other commands remain responsive during the
+    30-120 s CPU inference window.
+    """
     args = context.args
     if not args or len(args) < 2:
         await update.message.reply_text(
@@ -129,13 +136,20 @@ async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     token = _get_or_create_session(update.effective_user.id)
 
-    await update.message.reply_text(f"Routing to {expert} expert…")
+    # Acknowledge immediately — inference is slow on CPU.
+    await update.message.reply_text(f"⏳ Routing to {expert} expert… (this may take a moment)")
 
-    response = middleware.handle(
-        session_token=token,
-        prompt=prompt,
-        expert=expert,
-        credit_check=ledger.check_and_deduct,
+    # Run blocking inference off the event loop.
+    loop = asyncio.get_running_loop()
+    response = await loop.run_in_executor(
+        None,  # default ThreadPoolExecutor
+        functools.partial(
+            middleware.handle,
+            session_token=token,
+            prompt=prompt,
+            expert=expert,
+            credit_check=ledger.check_and_deduct,
+        ),
     )
 
     await update.message.reply_text(response)

@@ -56,8 +56,12 @@ class PrivacyMiddleware:
     # runs are automatically invalidated.
     _PROCESS_SECRET: bytes = os.urandom(32)
 
-    def __init__(self, credit_cost_per_request: int = 1):
+    def __init__(self, credit_cost_per_request: int = 1, max_age_seconds: int = 3600):
         self._cost = credit_cost_per_request
+        # GDPR Art. 5(1)(e) — storage limitation: sessions expire after
+        # max_age_seconds of inactivity and are evicted lazily on the next
+        # create_session() or handle() call.
+        self._max_age = max_age_seconds
         # In-memory session store: token → metadata dict.
         # No user identity is held here — only the token itself.
         self._sessions: dict[str, dict] = {}
@@ -79,6 +83,8 @@ class PrivacyMiddleware:
             A 64-hex-char session token that is safe to share with the
             caller but cannot be reversed to the source identifier.
         """
+        # Piggyback eviction on session creation — no extra thread needed.
+        self._evict_expired()
         nonce = os.urandom(16)
         token = hmac.new(
             self._PROCESS_SECRET,
@@ -88,6 +94,25 @@ class PrivacyMiddleware:
         # Store only the token itself — no link back to opaque_identifier.
         self._sessions[token] = {"created_at": time.time()}
         return token
+
+    # ------------------------------------------------------------------
+    # Session lifecycle
+    # ------------------------------------------------------------------
+
+    def _evict_expired(self) -> None:
+        """
+        Remove sessions older than max_age_seconds.
+
+        Called lazily on create_session() and handle() — no background
+        thread required.  O(n) over active sessions; acceptable because
+        the session count is bounded by unique active users.
+        """
+        cutoff = time.time() - self._max_age
+        expired = [t for t, meta in self._sessions.items() if meta["created_at"] < cutoff]
+        for t in expired:
+            del self._sessions[t]
+        if expired:
+            _audit_log.info("Evicted %d expired session(s).", len(expired))
 
     def session_exists(self, token: str) -> bool:
         return token in self._sessions
@@ -123,6 +148,7 @@ class PrivacyMiddleware:
             The model response string. The caller is responsible for
             displaying it; this layer does not log or store it.
         """
+        self._evict_expired()
         if not self.session_exists(session_token):
             return "Invalid or expired session."
 
