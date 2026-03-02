@@ -5,3 +5,11 @@ gatherUsageStats = false
 headless = true
 port = 8501
 address = "localhost"
+
+[theme]
+base                  = "dark"
+primaryColor          = "#7C3AED"
+backgroundColor       = "#0F172A"
+secondaryBackgroundColor = "#1E293B"
+textColor             = "#F1F5F9"
+font                  = "sans serif"

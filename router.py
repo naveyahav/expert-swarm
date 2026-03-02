@@ -173,6 +173,31 @@ def _get_model(model_id: str):
     return _MODEL_CACHE[model_id]["model"], _MODEL_CACHE[model_id]["tokenizer"]
 
 
+def _infer_stream(model, tokenizer, prompt: str):
+    """
+    Like _infer() but yields tokens one-by-one using TextIteratorStreamer.
+    Generation runs in a background thread so the caller can iterate tokens
+    in real time — used by route_stream() for streaming UI responses.
+    """
+    import threading
+    from transformers import TextIteratorStreamer
+
+    formatted = f"Q: {prompt}\nA:"
+    inputs = tokenizer(formatted, return_tensors="pt").to(model.device)
+    streamer = TextIteratorStreamer(
+        tokenizer, skip_prompt=True, skip_special_tokens=True
+    )
+    thread = threading.Thread(
+        target=model.generate,
+        kwargs=dict(**inputs, max_new_tokens=512, streamer=streamer),
+        daemon=True,
+    )
+    thread.start()
+    for token in streamer:
+        yield token
+    thread.join()
+
+
 def _infer(model, tokenizer, prompt: str) -> str:
     """Run a forward pass and return only the newly generated tokens.
 
@@ -247,6 +272,65 @@ def route(prompt: str, expert: Optional[str] = None) -> str:
     response = _infer(model, tokenizer, prompt)
     unload_adapter(model)
     return response
+
+
+# ---------------------------------------------------------------------------
+# Streaming public entry point
+# ---------------------------------------------------------------------------
+
+def route_stream(prompt: str, expert: Optional[str] = None):
+    """
+    Like route() but yields tokens incrementally via TextIteratorStreamer.
+    Use this for streaming UIs (e.g. st.write_stream in web_app.py).
+
+    Yields:
+        str — individual decoded token strings as they are generated.
+              On error yields a single error message string and returns.
+    """
+    from core.base_model import DEFAULT_MODEL_ID
+
+    manifest = load_manifest()
+
+    if expert is not None:
+        if expert not in manifest.get("experts", {}):
+            yield f"Unknown expert '{expert}'. Check manifest.json."
+            return
+        expert_name = expert
+    else:
+        expert_name = _select_expert(prompt, manifest)
+
+    if expert_name is None:
+        yield "No enabled expert found for this prompt."
+        return
+
+    expert_meta = manifest["experts"][expert_name]
+
+    if not expert_meta.get("enabled", False):
+        yield f"Expert '{expert_name}' is disabled in manifest.json."
+        return
+
+    log.info("Streaming route to expert: '%s'", expert_name)
+
+    base_model, tokenizer = _get_model(DEFAULT_MODEL_ID)
+
+    # Base mode — stream directly from base model.
+    if expert_meta.get("adapter_path") is None:
+        yield from _infer_stream(base_model, tokenizer, prompt)
+        return
+
+    # Adapter mode — validate, load, stream, unload.
+    from core.adapter_loader import load_adapter, unload_adapter
+
+    adapter_path = str(PROJECT_ROOT / expert_meta["adapter_path"])
+    expected_hash = expert_meta["sha256"]
+
+    if not validate_expert(adapter_path, expected_hash):
+        yield f"Security check failed for expert '{expert_name}'. Adapter not loaded."
+        return
+
+    model = load_adapter(base_model, adapter_path)
+    yield from _infer_stream(model, tokenizer, prompt)
+    unload_adapter(model)
 
 
 # ---------------------------------------------------------------------------
