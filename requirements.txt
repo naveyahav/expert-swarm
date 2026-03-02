@@ -8,5 +8,8 @@ bitsandbytes>=0.43.0
 streamlit>=1.35.0
 accelerate>=0.30.0       # required by transformers device_map="auto"
 
+# Interfaces
+python-telegram-bot>=21.0  # Telegram bot interface
+
 # Testing
 pytest>=8.0.0
