@@ -131,19 +131,28 @@ def validate_expert(expert_path: str, expected_hash: str) -> bool:
 
 def _select_expert(prompt: str, manifest: dict) -> str | None:
     """
-    Simple keyword-based intent classifier.
-    Returns the name of the best matching enabled expert, or None.
-
-    Replace with an embedding-based classifier for production use.
+    Two-stage intent classifier:
+      1. Semantic matching via MiniLM cosine similarity (core/semantic_router.py).
+         Falls back silently if sentence-transformers is unavailable.
+      2. Keyword rules — fast deterministic fallback.
+      3. First enabled expert — last resort.
     """
+    experts = manifest.get("experts", {})
+    enabled = [n for n, e in experts.items() if e.get("enabled", False)]
+
+    # --- Stage 1: Semantic routing -------------------------------------------
+    from core.semantic_router import classify
+    best = classify(prompt, enabled)
+    if best is not None:
+        return best
+
+    # --- Stage 2: Keyword fallback -------------------------------------------
     prompt_lower = prompt.lower()
     rules = {
         "coder":   ["code", "function", "bug", "debug", "script", "sql", "python", "javascript"],
         "analyst": ["analyse", "analyze", "summarise", "summarize", "data", "trend", "report"],
         "writer":  ["write", "essay", "draft", "edit", "rewrite", "story"],
     }
-
-    experts = manifest.get("experts", {})
     for expert_name, keywords in rules.items():
         entry = experts.get(expert_name, {})
         if not entry.get("enabled", False):
@@ -151,7 +160,7 @@ def _select_expert(prompt: str, manifest: dict) -> str | None:
         if any(kw in prompt_lower for kw in keywords):
             return expert_name
 
-    # Fall back to the first enabled expert.
+    # --- Stage 3: First enabled expert ---------------------------------------
     for name, entry in experts.items():
         if entry.get("enabled", False):
             return name
@@ -189,7 +198,13 @@ def _infer_stream(model, tokenizer, prompt: str):
     )
     thread = threading.Thread(
         target=model.generate,
-        kwargs=dict(**inputs, max_new_tokens=512, streamer=streamer),
+        kwargs=dict(
+            **inputs,
+            max_new_tokens=512,
+            streamer=streamer,
+            pad_token_id=tokenizer.eos_token_id,
+            do_sample=False,
+        ),
         daemon=True,
     )
     thread.start()
@@ -210,7 +225,12 @@ def _infer(model, tokenizer, prompt: str) -> str:
     formatted = f"Q: {prompt}\nA:"
     inputs = tokenizer(formatted, return_tensors="pt").to(model.device)
     input_length = inputs["input_ids"].shape[1]
-    output_ids = model.generate(**inputs, max_new_tokens=512)
+    output_ids = model.generate(
+        **inputs,
+        max_new_tokens=512,
+        pad_token_id=tokenizer.eos_token_id,
+        do_sample=False,
+    )
     # Decode only the tokens generated *after* the input prompt.
     new_tokens = output_ids[0][input_length:]
     return tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
