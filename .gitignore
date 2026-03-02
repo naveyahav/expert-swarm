@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# HuggingFace model cache
+.cache/
+*.bin
+*.safetensors
+*.gguf
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Pytest
+.pytest_cache/
+htmlcov/
+.coverage
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code internals
+.claude/

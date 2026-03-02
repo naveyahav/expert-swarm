@@ -1,0 +1,33 @@
+{
+  "_comment": "ExpertSwarm adapter manifest. Each entry maps an expert name to its adapter path and expected SHA-256 hash. The hash covers the entire adapter directory contents. Run scripts/hash_adapter.py to generate hashes for new adapters.",
+  "experts": {
+    "base": {
+      "description": "phi-2 base model, no adapter — general purpose chat and Q&A.",
+      "adapter_path": null,
+      "sha256": null,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    "coder": {
+      "description": "Code generation and debugging specialist (Python, JS, SQL).",
+      "adapter_path": "experts/coder",
+      "sha256": "REPLACE_WITH_ACTUAL_SHA256_OF_CODER_ADAPTER_DIR",
+      "version": "1.0.0",
+      "enabled": true
+    },
+    "analyst": {
+      "description": "Data analysis, summarisation, and structured reasoning.",
+      "adapter_path": "experts/analyst",
+      "sha256": "REPLACE_WITH_ACTUAL_SHA256_OF_ANALYST_ADAPTER_DIR",
+      "version": "1.0.0",
+      "enabled": true
+    },
+    "writer": {
+      "description": "Long-form writing, editing, and creative tasks.",
+      "adapter_path": "experts/writer",
+      "sha256": "REPLACE_WITH_ACTUAL_SHA256_OF_WRITER_ADAPTER_DIR",
+      "version": "1.0.0",
+      "enabled": false
+    }
+  }
+}

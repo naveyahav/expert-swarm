@@ -1,0 +1,12 @@
+# ExpertSwarm dependencies
+# Pin major versions; update deliberately and re-validate SHA-256 hashes.
+
+torch>=2.3.0
+transformers>=4.41.0
+peft>=0.11.0
+bitsandbytes>=0.43.0
+streamlit>=1.35.0
+accelerate>=0.30.0       # required by transformers device_map="auto"
+
+# Testing
+pytest>=8.0.0
