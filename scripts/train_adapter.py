@@ -10,6 +10,7 @@ Usage:
     python scripts/train_adapter.py --expert coder
     python scripts/train_adapter.py --expert analyst --epochs 3
     python scripts/train_adapter.py --expert writer --max_samples 2000 --lr 1e-4
+    python scripts/train_adapter.py --expert coder --dry_run   # validate pipeline only
 
 Outputs:
     experts/<expert>/          ← saved adapter weights
@@ -24,6 +25,8 @@ Hardware note:
     CPU training is functional but slow (~1 h per 1 000 samples on phi-2).
     For production fine-tuning use a GPU instance; the script auto-detects
     CUDA and enables mixed-precision training accordingly.
+    Gradient checkpointing is enabled automatically on CPU to reduce peak
+    memory usage at the cost of ~20% extra compute per step.
 """
 
 import argparse
@@ -168,7 +171,7 @@ def train(expert: str, epochs: int, max_samples: int, learning_rate: float) -> P
         )
         model_kwargs["device_map"] = "auto"
     else:
-        model_kwargs["dtype"] = torch.float32
+        model_kwargs["torch_dtype"] = torch.float32
         model_kwargs["device_map"] = "cpu"
 
     model = AutoModelForCausalLM.from_pretrained(DEFAULT_MODEL_ID, **model_kwargs)
@@ -184,6 +187,12 @@ def train(expert: str, epochs: int, max_samples: int, learning_rate: float) -> P
     )
     model = get_peft_model(model, lora_cfg)
     model.print_trainable_parameters()
+
+    # Gradient checkpointing: trades compute for memory — critical on CPU where
+    # RAM is the bottleneck. Must be enabled after get_peft_model().
+    if not use_cuda:
+        model.gradient_checkpointing_enable()
+        log.info("Gradient checkpointing enabled (CPU mode).")
 
     # --- Dataset + tokenization ----------------------------------------------
     raw_ds = load_and_prepare_dataset(expert, max_samples)
@@ -269,6 +278,44 @@ def update_manifest(expert: str, adapter_dir: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Dry-run: validate the pipeline without loading the model
+# ---------------------------------------------------------------------------
+
+def dry_run(expert: str, epochs: int, max_samples: int, learning_rate: float) -> None:
+    """
+    Validate the training pipeline end-to-end without loading the model.
+
+    Steps performed:
+      1. Dataset download + filter + format (real network call)
+      2. Log the full training configuration
+      3. Exit — no model weights loaded, no GPU/RAM required
+
+    Useful for CI, smoke-testing dataset access, and verifying argument parsing.
+    """
+    import torch
+    from core.base_model import DEFAULT_MODEL_ID
+
+    use_cuda = torch.cuda.is_available()
+    adapter_dir = PROJECT_ROOT / "experts" / expert
+
+    log.info("=== DRY RUN — no model will be loaded ===")
+    log.info(
+        "Expert: %s | Model: %s | Device: %s | Epochs: %d | Samples: %d | LR: %s",
+        expert, DEFAULT_MODEL_ID, "cuda" if use_cuda else "cpu",
+        epochs, max_samples, learning_rate,
+    )
+    log.info("Adapter output dir: %s", adapter_dir)
+    log.info("Gradient checkpointing: %s", "enabled (CPU)" if not use_cuda else "N/A (GPU/fp16)")
+
+    # Validate dataset access — the only real I/O in dry-run mode.
+    ds = load_and_prepare_dataset(expert, max_samples)
+    log.info("Dataset OK — %d samples ready for training.", len(ds))
+    log.info("Sample[0]: %s", ds[0]["text"][:120].replace("\n", " ") + "…")
+
+    log.info("=== DRY RUN complete — pipeline validated. Run without --dry_run to train. ===")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -284,7 +331,15 @@ def main() -> None:
     parser.add_argument("--epochs",      type=int,   default=2,    help="Training epochs.")
     parser.add_argument("--max_samples", type=int,   default=1000, help="Max training samples.")
     parser.add_argument("--lr",          type=float, default=2e-4, help="Learning rate.")
+    parser.add_argument(
+        "--dry_run", action="store_true",
+        help="Validate dataset + config without loading the model or training.",
+    )
     args = parser.parse_args()
+
+    if args.dry_run:
+        dry_run(args.expert, args.epochs, args.max_samples, args.lr)
+        return
 
     adapter_dir = train(args.expert, args.epochs, args.max_samples, args.lr)
     update_manifest(args.expert, adapter_dir)

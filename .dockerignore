@@ -1,0 +1,18 @@
+# Exclude everything that shouldn't be in the image
+.git/
+.github/
+.claude/
+.env
+*.db
+data/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+htmlcov/
+.coverage
+.venv/
+venv/
+*.safetensors
+*.bin
+*.gguf
+experts/*/_checkpoints/

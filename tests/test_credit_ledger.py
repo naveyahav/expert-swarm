@@ -127,18 +127,13 @@ class TestCreditLedger:
     def test_cost_per_request_is_one(self):
         assert COST_PER_REQUEST == 1
 
-    def test_mint_raises_on_non_mock_backend(self):
-        """mint() is intentionally MockBackend-only; real backends don't expose it."""
-        from abc import ABC, abstractmethod
-        from credits.ledger import PaymentBackend
+    def test_mint_works_on_any_backend(self):
+        """mint() must work on any PaymentBackend, not just MockBackend."""
+        from credits.sqlite_backend import SQLiteBackend
+        ledger = CreditLedger(backend=SQLiteBackend(db_path=":memory:"))
+        ledger.mint("tok", 10)
+        assert ledger.balance("tok") == 10
 
-        class StubBackend(PaymentBackend):
-            def verify_and_claim(self, session_token, amount):
-                return True
-
-        ledger = CreditLedger(backend=StubBackend())
-        try:
-            ledger.mint("tok", 10)
-            assert False, "Expected TypeError"
-        except TypeError:
-            pass
+    def test_backend_property_returns_instance(self):
+        ledger = CreditLedger()
+        assert isinstance(ledger.backend, MockBackend)

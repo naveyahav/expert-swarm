@@ -1,0 +1,63 @@
+# =============================================================================
+# ExpertSwarm — docker-compose
+#
+# Usage:
+#   cp .env.example .env          # fill in secrets
+#   docker compose up --build     # start both services
+#   docker compose up web         # web UI only
+#   docker compose up bot         # Telegram bot only
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Web UI — Streamlit dark-theme interface
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      target: runtime
+    command: python -m streamlit run interfaces/web_app.py
+    ports:
+      - "${WEB_PORT:-8501}:8501"
+    env_file: .env
+    environment:
+      EXPERTSWARM_BACKEND: sqlite
+      EXPERTSWARM_DB_PATH: /data/credits.db
+    volumes:
+      - data:/data
+      - hf_cache:/home/appuser/.cache/huggingface
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # Telegram bot
+  # ---------------------------------------------------------------------------
+  bot:
+    build:
+      context: .
+      target: runtime
+    command: python interfaces/telegram_bot.py
+    env_file: .env
+    environment:
+      EXPERTSWARM_BACKEND: sqlite
+      EXPERTSWARM_DB_PATH: /data/credits.db
+    volumes:
+      - data:/data
+      - hf_cache:/home/appuser/.cache/huggingface
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+
+# ---------------------------------------------------------------------------
+# Named volumes
+# ---------------------------------------------------------------------------
+volumes:
+  data:       # SQLite credit database — shared between web and bot
+  hf_cache:   # HuggingFace model cache — avoids re-downloading on restart

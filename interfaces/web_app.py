@@ -1,8 +1,6 @@
 """
 interfaces/web_app.py
-ExpertSwarm — modern dark-theme web UI.
-
-Replaces interfaces/desktop_app.py (tkinter).
+ExpertSwarm — production Streamlit web UI.
 
 Run:
     streamlit run interfaces/web_app.py
@@ -10,12 +8,16 @@ Run:
 Features:
   - Dark slate theme (configured in .streamlit/config.toml)
   - Streaming responses via router.route_stream() + st.write_stream()
-  - Sidebar: expert selector, live credit balance, top-up, clear chat
-  - CreditLedger + PrivacyMiddleware wired in — same gates as desktop app
+  - Sidebar: expert selector, live credit balance, top-up, clear chat,
+    backend type indicator
+  - Input validation: 1 000-char limit with live counter
+  - Inference timing displayed per response
+  - CreditLedger + PrivacyMiddleware — same security gates as bot
   - No prompt or response text is logged or persisted beyond the session
 """
 
 import sys
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
@@ -26,6 +28,8 @@ import streamlit as st
 
 from credits.ledger import CreditLedger, DEMO_MINT_AMOUNT
 from privacy.middleware import PrivacyMiddleware
+
+_MAX_PROMPT_LEN = 1_000
 
 # ---------------------------------------------------------------------------
 # Page config — must be the first Streamlit call
@@ -39,15 +43,13 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
-# Custom CSS — polish on top of the dark theme
+# Custom CSS
 # ---------------------------------------------------------------------------
 
 st.markdown("""
 <style>
-/* Tighten up the top padding */
 .block-container { padding-top: 2rem; padding-bottom: 1rem; }
 
-/* Expert badge chip in the chat bubble */
 .expert-badge {
     display: inline-block;
     padding: 1px 8px;
@@ -61,7 +63,6 @@ st.markdown("""
     border: 1px solid #7C3AED55;
 }
 
-/* Credit balance pill */
 .credit-pill {
     text-align: center;
     padding: 0.5rem 1rem;
@@ -74,7 +75,16 @@ st.markdown("""
     margin-bottom: 0.5rem;
 }
 
-/* Remove the default footer */
+.meta-chip {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 0.65rem;
+    color: #64748B;
+    border: 1px solid #334155;
+    margin-right: 4px;
+}
+
 footer { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
@@ -125,7 +135,6 @@ with st.sidebar:
     st.markdown("## 🐝 ExpertSwarm")
     st.divider()
 
-    # Expert selector
     st.markdown("**Active Expert**")
     selected_expert = st.selectbox(
         label="expert",
@@ -133,17 +142,20 @@ with st.sidebar:
         label_visibility="collapsed",
     )
 
-    # Expert description
     meta = manifest["experts"].get(selected_expert, {})
     st.caption(meta.get("description", ""))
     st.divider()
 
     # Credit balance
     balance = ledger.balance(token)
+    credit_color = "#A78BFA" if balance > 2 else "#EF4444"
     st.markdown(
-        f'<div class="credit-pill">⚡ {balance} credits</div>',
+        f'<div class="credit-pill" style="color:{credit_color}">⚡ {balance} credits</div>',
         unsafe_allow_html=True,
     )
+
+    if balance <= 2:
+        st.warning("Low credits — top up to continue.", icon="⚠️")
 
     if st.button("＋ Add 10 credits", use_container_width=True):
         ledger.mint(token, 10)
@@ -155,7 +167,15 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-    st.caption(f"Session: `{token[:12]}…`")
+    st.divider()
+
+    # Backend + session info
+    backend_name = type(ledger.backend).__name__
+    st.markdown(
+        f'<span class="meta-chip">backend: {backend_name}</span>'
+        f'<span class="meta-chip">session: {token[:8]}…</span>',
+        unsafe_allow_html=True,
+    )
 
 # ---------------------------------------------------------------------------
 # Main — header + chat
@@ -169,49 +189,72 @@ st.divider()
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         if msg["role"] == "assistant":
+            expert_label = msg.get("expert", "base")
+            elapsed      = msg.get("elapsed_s")
+            timing       = f" · {elapsed:.1f}s" if elapsed else ""
             st.markdown(
-                f'<span class="expert-badge">{msg.get("expert", "base")}</span>',
+                f'<span class="expert-badge">{expert_label}{timing}</span>',
                 unsafe_allow_html=True,
             )
         st.markdown(msg["content"])
 
-# Chat input — stays pinned to the bottom by Streamlit's layout
-if prompt := st.chat_input("Ask the swarm…"):
+# ---------------------------------------------------------------------------
+# Chat input
+# ---------------------------------------------------------------------------
 
-    # Guard: check credits before doing anything
-    balance = ledger.balance(token)
-    if balance < 1:
-        st.warning("Out of credits. Use **＋ Add 10 credits** in the sidebar.")
+if prompt := st.chat_input(f"Ask the swarm… (max {_MAX_PROMPT_LEN:,} chars)"):
+
+    # Input validation
+    if len(prompt) > _MAX_PROMPT_LEN:
+        st.warning(
+            f"Message too long ({len(prompt):,} chars). "
+            f"Please keep it under {_MAX_PROMPT_LEN:,} characters."
+        )
         st.stop()
 
-    # Show user message immediately
+    # Credit pre-check
+    balance = ledger.balance(token)
+    if balance < 1:
+        st.warning(
+            "⚠️ Out of credits. Use **＋ Add 10 credits** in the sidebar.",
+            icon="⚠️",
+        )
+        st.stop()
+
+    # Display user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Stream the assistant response
+    # Stream assistant response
     with st.chat_message("assistant"):
         st.markdown(
             f'<span class="expert-badge">{selected_expert}</span>',
             unsafe_allow_html=True,
         )
         with st.spinner(f"{selected_expert} is thinking…"):
-            # Deduct credit before inference (hard gate)
+            # Hard credit gate
             if not ledger.check_and_deduct(token, 1):
                 st.warning("Insufficient credits.")
                 st.stop()
 
             import router
-            response = st.write_stream(
-                router.route_stream(prompt, expert=selected_expert)
-            )
+            t0 = time.perf_counter()
+            try:
+                response = st.write_stream(
+                    router.route_stream(prompt, expert=selected_expert)
+                )
+            except Exception as exc:
+                st.error(f"Inference error: {exc}")
+                st.stop()
+            elapsed = time.perf_counter() - t0
 
-    # Persist to history
+    # Persist to history with timing
     st.session_state.messages.append({
-        "role": "assistant",
-        "content": response,
-        "expert": selected_expert,
+        "role":      "assistant",
+        "content":   response,
+        "expert":    selected_expert,
+        "elapsed_s": elapsed,
     })
 
-    # Trigger sidebar balance refresh
     st.rerun()
