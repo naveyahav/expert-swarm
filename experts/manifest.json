@@ -18,7 +18,7 @@
     "analyst": {
       "description": "Data analysis, summarisation, and structured reasoning.",
       "adapter_path": "experts/analyst",
-      "sha256": "REPLACE_WITH_ACTUAL_SHA256_OF_ANALYST_ADAPTER_DIR",
+      "sha256": "c345e0654838b6b2dec378550c30a5879b103a2f83cd3b2fdfb40989e849aa9e",
       "version": "1.0.0",
       "enabled": true
     },
