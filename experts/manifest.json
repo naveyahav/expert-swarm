@@ -25,9 +25,9 @@
     "writer": {
       "description": "Long-form writing, editing, and creative tasks.",
       "adapter_path": "experts/writer",
-      "sha256": "REPLACE_WITH_ACTUAL_SHA256_OF_WRITER_ADAPTER_DIR",
+      "sha256": "7e15d86bdb0b92fd79d28d4ac544d5fdb1f892358ee9c53e3c5ee775d3c09521",
       "version": "1.0.0",
-      "enabled": false
+      "enabled": true
     }
   }
 }
